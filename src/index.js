@@ -1,6 +1,7 @@
 const cors = require("cors");
 const express = require("express");
 const http = require("http");
+const { createAdapter } = require("@socket.io/redis-adapter");
 const { Server } = require("socket.io");
 const { clientUrl, port } = require("./config");
 const { connectMongo } = require("./lib/mongo");
@@ -90,6 +91,7 @@ async function bootstrap() {
       credentials: true,
     },
   });
+  io.adapter(createAdapter(redis.adapterPublisher, redis.adapterSubscriber));
 
   registerSocketHandlers(io, redis);
   registerRealtimeHandlers(server);

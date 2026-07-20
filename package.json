@@ -6,13 +6,17 @@
   "type": "commonjs",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "start:pm2": "pm2 start ecosystem.config.cjs",
+    "reload:pm2": "pm2 reload ecosystem.config.cjs"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "mongoose": "^8.19.1",
+    "pm2": "^6.0.8",
     "redis": "^5.9.0",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0",
