@@ -10,6 +10,9 @@ const profiles = [
     gradientStart: "#F76B8A",
     gradientEnd: "#2D1E2F",
     interests: ["Afrobeats", "Coffee dates", "Weekend drives", "Dogs"],
+    imageUrls: ["https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=900&q=80"],
+    latitude: -1.2921,
+    longitude: 36.8219,
   },
   {
     id: "suu",
@@ -22,6 +25,9 @@ const profiles = [
     gradientStart: "#FD9E6A",
     gradientEnd: "#281515",
     interests: ["Pilates", "Photography", "Podcasts", "Brunch"],
+    imageUrls: ["https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?auto=format&fit=crop&w=900&q=80"],
+    latitude: 0.3476,
+    longitude: 32.5825,
   },
   {
     id: "musical",
@@ -34,6 +40,9 @@ const profiles = [
     gradientStart: "#F2D53C",
     gradientEnd: "#3A1808",
     interests: ["Live sets", "Hiking", "Travel", "Street food"],
+    imageUrls: ["https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=80"],
+    latitude: -1.9441,
+    longitude: 30.0619,
   },
   {
     id: "zuri",
@@ -46,6 +55,9 @@ const profiles = [
     gradientStart: "#7FD1B9",
     gradientEnd: "#1A2336",
     interests: ["Poetry", "Beach walks", "Matcha", "Museums"],
+    imageUrls: ["https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=900&q=80"],
+    latitude: -4.0435,
+    longitude: 39.6682,
   },
 ];
 

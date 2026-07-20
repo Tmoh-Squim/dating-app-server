@@ -5,7 +5,7 @@ const { Server } = require("socket.io");
 const { clientUrl, port } = require("./config");
 const { connectMongo } = require("./lib/mongo");
 const { createRedisClients } = require("./lib/redis");
-const { buildBootstrapPayload, ensureSeedData } = require("./services/bootstrap-service");
+const { buildBootstrapPayload, ensureSeedData, loginAccount, registerAccount } = require("./services/bootstrap-service");
 const { registerRealtimeHandlers } = require("./socket/registerRealtimeHandlers");
 const { registerSocketHandlers } = require("./socket/registerSocketHandlers");
 
@@ -51,20 +51,28 @@ async function bootstrap() {
   });
 
   app.get("/api/bootstrap", async (request, response) => {
-    const userId = String(request.query.userId || "timothy");
-    const displayName = String(request.query.displayName || "Timothy");
-    await ensureSeedData(userId, displayName);
+    const userId = String(request.query.userId || "");
+    await ensureSeedData();
     const payload = await buildBootstrapPayload(userId);
-    response.json({
-      user: {
-        id: userId,
-        displayName,
-      },
-      transport: {
-        websocketUrl: "/ws",
-      },
-      ...payload,
-    });
+    response.json(payload);
+  });
+
+  app.post("/api/auth/register", async (request, response) => {
+    try {
+      const created = await registerAccount(request.body);
+      response.status(201).json(created);
+    } catch (error) {
+      response.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (request, response) => {
+    try {
+      const account = await loginAccount(request.body.email, request.body.password);
+      response.json(account);
+    } catch (error) {
+      response.status(401).json({ message: error.message });
+    }
   });
 
   const server = http.createServer(app);
