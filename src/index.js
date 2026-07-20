@@ -62,7 +62,11 @@ async function bootstrap() {
       const created = await registerAccount(request.body);
       response.status(201).json(created);
     } catch (error) {
-      response.status(400).json({ message: error.message });
+      console.error("[auth/register] failed", error);
+      const isUserError = error.message === "Email already registered";
+      response.status(isUserError ? 400 : 500).json({
+        message: isUserError ? error.message : "Unable to create account right now. Please try again later.",
+      });
     }
   });
 
@@ -71,7 +75,11 @@ async function bootstrap() {
       const account = await loginAccount(request.body.email, request.body.password);
       response.json(account);
     } catch (error) {
-      response.status(401).json({ message: error.message });
+      console.error("[auth/login] failed", error);
+      const isUserError = error.message === "Invalid email or password";
+      response.status(isUserError ? 401 : 500).json({
+        message: isUserError ? error.message : "Unable to sign in right now. Please try again later.",
+      });
     }
   });
 
