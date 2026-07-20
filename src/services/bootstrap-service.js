@@ -12,6 +12,9 @@ async function ensureSeedData() {
       {
         _id: profile.id,
         email: `${profile.id}@proximo.app`,
+        phone: "",
+        googleId: "",
+        authProvider: "email",
         passwordHash: hashPassword("password123"),
         displayName: profile.name,
         age: profile.age,
@@ -232,7 +235,5 @@ function formatTimestamp(dateValue) {
 
 module.exports = {
   ensureSeedData,
-  registerAccount,
-  loginAccount,
   buildBootstrapPayload,
 };

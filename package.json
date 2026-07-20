@@ -12,10 +12,13 @@
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
+    "axios": "^1.12.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "google-auth-library": "^10.4.1",
     "mongoose": "^8.19.1",
+    "multer": "^2.0.2",
     "pm2": "^6.0.8",
     "redis": "^5.9.0",
     "socket.io": "^4.8.1",
