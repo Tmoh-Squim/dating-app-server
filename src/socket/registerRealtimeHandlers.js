@@ -1,7 +1,11 @@
 const { WebSocketServer } = require("ws");
-const CallSession = require("../models/CallSession");
+const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const { registerSwipe } = require("../services/match-service");
+const {
+  createCallSessionWithMessage,
+  updateCallSessionWithMessage,
+} = require("../services/call-service");
 
 function createConnectionRegistry() {
   const connections = new Map();
@@ -67,6 +71,28 @@ function registerRealtimeHandlers(server) {
   });
 }
 
+function mapCallPayload(message, { author, fromCurrentUser }) {
+  return {
+    id: String(message._id),
+    author,
+    type: message.type || "text",
+    body: message.body || "",
+    mediaUrl: message.mediaUrl || "",
+    mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+    callId: message.callId || "",
+    callMediaType: message.callMediaType || "",
+    callStatus: message.callStatus || "",
+    callDurationSeconds: Number(message.callDurationSeconds || 0),
+    timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    fromCurrentUser,
+    senderId: message.senderId,
+  };
+}
+
 async function handleRealtimeEvent({ type, payload, userId, registry, socket }) {
   if (type === "typing:start" || type === "typing:stop") {
     registry.send(payload.peerId, {
@@ -81,29 +107,27 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
   }
 
   if (type === "message:send") {
+    const messageType = payload.type === "voice_note" ? "voice_note" : "text";
     const message = await Message.create({
       conversationId: payload.conversationId,
       senderId: userId,
       recipientId: payload.recipientId,
-      body: payload.body,
+      type: messageType,
+      body: String(payload.body || "").trim(),
+      mediaUrl: String(payload.mediaUrl || "").trim(),
+      mediaDurationSeconds: Math.max(0, Number(payload.mediaDurationSeconds) || 0),
     });
+
+    await Conversation.findOneAndUpdate(
+      { _id: payload.conversationId },
+      { lastMessageAt: new Date() },
+    );
 
     const event = {
       type: "message:new",
       payload: {
         conversationId: payload.conversationId,
-        message: {
-          id: String(message._id),
-          author: userId,
-          body: message.body,
-          timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          }),
-          fromCurrentUser: false,
-          senderId: userId,
-        },
+        message: mapRealtimeMessage(message, { author: userId, fromCurrentUser: false }),
       },
     };
 
@@ -114,14 +138,10 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
         payload: {
           conversationId: payload.conversationId,
           clientId: payload.clientId,
-          message: {
-            id: String(message._id),
+          message: mapRealtimeMessage(message, {
             author: "You",
-            body: message.body,
-            timestamp: event.payload.message.timestamp,
             fromCurrentUser: true,
-            senderId: userId,
-          },
+          }),
         },
       }),
     );
@@ -129,12 +149,41 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
   }
 
   if (type === "call:start") {
-    const call = await CallSession.create({
+    const { call, message } = await createCallSessionWithMessage({
       conversationId: payload.conversationId,
       callerId: userId,
       calleeId: payload.calleeId,
-      type: payload.callType,
+      callType: payload.callType,
     });
+    socket.send(JSON.stringify({
+      type: "call:started",
+      payload: {
+        callId: String(call._id),
+        peerId: payload.calleeId,
+        conversationId: payload.conversationId,
+      },
+    }));
+    registry.send(payload.calleeId, {
+      type: "message:new",
+      payload: {
+        conversationId: payload.conversationId,
+        message: mapCallPayload(message, {
+          author: payload.callerName || "Call",
+          fromCurrentUser: false,
+        }),
+      },
+    });
+    socket.send(JSON.stringify({
+      type: "message:ack",
+      payload: {
+        conversationId: payload.conversationId,
+        clientId: `call-${call.id}`,
+        message: mapCallPayload(message, {
+          author: "You",
+          fromCurrentUser: true,
+        }),
+      },
+    }));
     registry.send(payload.calleeId, {
       type: "call:incoming",
       payload: {
@@ -154,10 +203,35 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       "call:reject": "rejected",
       "call:end": "ended",
     };
-    await CallSession.findByIdAndUpdate(payload.callId, {
+    const { call, message } = await updateCallSessionWithMessage({
+      callId: payload.callId,
       status: statusMap[type],
-      endedAt: type === "call:end" || type === "call:reject" ? new Date() : null,
+      actorId: userId,
     });
+    if (message) {
+      const callerAuthor = call.callerId === userId ? "You" : payload.actorName || "Call";
+      const calleeAuthor = call.calleeId === userId ? "You" : payload.actorName || "Call";
+      registry.send(call.callerId, {
+        type: "message:new",
+        payload: {
+          conversationId: call.conversationId,
+          message: mapCallPayload(message, {
+            author: callerAuthor,
+            fromCurrentUser: call.callerId === userId,
+          }),
+        },
+      });
+      registry.send(call.calleeId, {
+        type: "message:new",
+        payload: {
+          conversationId: call.conversationId,
+          message: mapCallPayload(message, {
+            author: calleeAuthor,
+            fromCurrentUser: call.calleeId === userId,
+          }),
+        },
+      });
+    }
     registry.send(payload.peerId, { type, payload: { ...payload, actorId: userId } });
     return;
   }
@@ -175,6 +249,28 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
     });
     socket.send(JSON.stringify({ type: "swipe:result", payload: result }));
   }
+}
+
+function mapRealtimeMessage(message, { author, fromCurrentUser }) {
+  return {
+    id: String(message._id),
+    author,
+    type: message.type || "text",
+    body: message.body || "",
+    mediaUrl: message.mediaUrl || "",
+    mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+    callId: message.callId || "",
+    callMediaType: message.callMediaType || "",
+    callStatus: message.callStatus || "",
+    callDurationSeconds: Number(message.callDurationSeconds || 0),
+    timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    fromCurrentUser,
+    senderId: message.senderId,
+  };
 }
 
 module.exports = {

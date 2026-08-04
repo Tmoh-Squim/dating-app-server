@@ -7,6 +7,7 @@ const { clientUrl, port } = require("./config");
 const {
   AppError,
   completeOnboarding,
+  linkPhoneAccountEmail,
   loginAccount,
   loginPhoneAccount,
   loginPhoneWithOtp,
@@ -16,11 +17,11 @@ const {
   requestOtp,
   verifyOtp,
 } = require("./services/auth-service");
-const { absoluteUploadDir, profileImageUpload } = require("./lib/uploads");
+const { absoluteUploadDir, callRecordingUpload, profileImageUpload, voiceNoteUpload } = require("./lib/uploads");
 const { connectMongo } = require("./lib/mongo");
 const { createRedisClients } = require("./lib/redis");
 const { buildBootstrapPayload, ensureSeedData } = require("./services/bootstrap-service");
-const { removeProfileImages, toBoolean, uploadProfileImages } = require("./services/upload-service");
+const { removeProfileImages, toBoolean, uploadCallRecording, uploadProfileImages, uploadVoiceNote } = require("./services/upload-service");
 const { registerRealtimeHandlers } = require("./socket/registerRealtimeHandlers");
 const { registerSocketHandlers } = require("./socket/registerSocketHandlers");
 
@@ -140,6 +141,15 @@ async function bootstrap() {
     }
   });
 
+  app.post("/api/auth/phone/link-email", async (request, response) => {
+    try {
+      const account = await linkPhoneAccountEmail(request.body);
+      response.json(account);
+    } catch (error) {
+      respondAuthError(response, "auth/phone/link-email", error, "Unable to save your email login right now. Please try again later.");
+    }
+  });
+
   app.post("/api/auth/phone/login", async (request, response) => {
     try {
       const account = await loginPhoneAccount(request.body.phone, request.body.password);
@@ -178,6 +188,34 @@ async function bootstrap() {
       response.status(201).json(result);
     } catch (error) {
       respondAuthError(response, "users/profile-images/upload", error, "Unable to upload images right now. Please try again later.");
+    }
+  });
+
+  app.post("/api/users/:userId/voice-notes", voiceNoteUpload.single("voiceNote"), async (request, response) => {
+    try {
+      const result = await uploadVoiceNote({
+        userId: request.params.userId,
+        file: request.file,
+        durationSeconds: request.body.durationSeconds,
+      });
+      response.status(201).json(result);
+    } catch (error) {
+      respondAuthError(response, "users/voice-notes/upload", error, "Unable to upload the voice note right now. Please try again later.");
+    }
+  });
+
+  app.post("/api/calls/:callId/recordings", callRecordingUpload.single("recording"), async (request, response) => {
+    try {
+      const result = await uploadCallRecording({
+        callId: request.params.callId,
+        file: request.file,
+        kind: request.body.kind,
+        mimeType: request.body.mimeType,
+        durationSeconds: request.body.durationSeconds,
+      });
+      response.status(201).json(result);
+    } catch (error) {
+      respondAuthError(response, "calls/recordings/upload", error, "Unable to upload the call recording right now. Please try again later.");
     }
   });
 

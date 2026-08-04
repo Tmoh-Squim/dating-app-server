@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const { buildPublicUploadUrl, deleteLocalUploadByUrl } = require("../lib/uploads");
 const { AppError } = require("./auth-service");
+const { attachCallRecording } = require("./call-service");
 
 function toBoolean(value) {
   return String(value || "").trim().toLowerCase() === "true";
@@ -89,8 +90,74 @@ async function removeProfileImages({ userId, imageUrls = [] }) {
   };
 }
 
+async function uploadVoiceNote({ userId, file, durationSeconds = 0 }) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) {
+    throw new AppError(400, "User id is required");
+  }
+
+  const user = await User.findById(normalizedUserId);
+  if (!user) {
+    if (file?.path) {
+      deleteLocalUploadByUrl(buildPublicUploadUrl(file.path));
+    }
+    throw new AppError(404, "Account not found");
+  }
+
+  if (!file?.path) {
+    throw new AppError(400, "Select a voice note to upload");
+  }
+
+  const mediaDurationSeconds = Math.max(0, Number(durationSeconds) || 0);
+  user.lastActiveAt = new Date();
+  await user.save();
+
+  return {
+    userId: user._id,
+    voiceNoteUrl: buildPublicUploadUrl(file.path),
+    mediaDurationSeconds,
+  };
+}
+
+async function uploadCallRecording({ callId, file, kind, mimeType, durationSeconds = 0 }) {
+  try {
+    const call = await attachCallRecording({
+      callId,
+      file,
+      kind,
+      mimeType,
+      durationSeconds,
+      buildPublicUploadUrl,
+    });
+
+    return {
+      callId: call.id,
+      recordingStatus: call.recordingStatus,
+      recordings: call.recordings.map(recording => ({
+        kind: recording.kind,
+        url: recording.url,
+        mimeType: recording.mimeType || "",
+        durationSeconds: Number(recording.durationSeconds || 0),
+      })),
+    };
+  } catch (error) {
+    if (error.message === "Call session not found") {
+      if (file?.path) {
+        deleteLocalUploadByUrl(buildPublicUploadUrl(file.path));
+      }
+      throw new AppError(404, "Call session not found");
+    }
+    if (error.message === "Select a call recording to upload") {
+      throw new AppError(400, error.message);
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   removeProfileImages,
+  uploadCallRecording,
   uploadProfileImages,
+  uploadVoiceNote,
   toBoolean,
 };

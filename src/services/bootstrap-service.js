@@ -24,6 +24,9 @@ async function ensureSeedData() {
         interests: profile.interests,
         avatarUrl: profile.imageUrls?.[0] || "",
         imageUrls: profile.imageUrls || [],
+        balance: 0,
+        isPremimum: false,
+        isVeried: false,
         latitude: profile.latitude,
         longitude: profile.longitude,
         onboardingCompleted: true,
@@ -129,7 +132,14 @@ async function buildBootstrapPayload(userId) {
     const messages = dbMessages.map(message => ({
       id: String(message._id),
       author: message.senderId === userId ? "You" : peer.displayName,
+      type: message.type || "text",
       body: message.body,
+      mediaUrl: message.mediaUrl || "",
+      mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+      callId: message.callId || "",
+      callMediaType: message.callMediaType || "",
+      callStatus: message.callStatus || "",
+      callDurationSeconds: Number(message.callDurationSeconds || 0),
       timestamp: formatTimestamp(message.createdAt),
       fromCurrentUser: message.senderId === userId,
       senderId: message.senderId,
@@ -142,7 +152,7 @@ async function buildBootstrapPayload(userId) {
       gradientStart: profileGradient(peerId).start,
       gradientEnd: profileGradient(peerId).end,
       unreadCount: 0,
-      lastMessage: messages[messages.length - 1]?.body || "",
+      lastMessage: summarizeMessage(messages[messages.length - 1]) || "",
       messages,
     });
   }
@@ -153,6 +163,9 @@ async function buildBootstrapPayload(userId) {
     user: {
       id: currentUser._id,
       displayName: currentUser.displayName,
+      balance: Number(currentUser.balance || 0),
+      isPremimum: Boolean(currentUser.isPremimum),
+      isVeried: Boolean(currentUser.isVeried),
     },
     transport: {
       websocketUrl: "/ws",
@@ -172,6 +185,13 @@ function seedStarterConversationsIfEmpty(userId, conversationRecords) {
       id: `${profile.id}-${index}`,
       author: message.fromCurrentUser ? "You" : profile.name,
       body: message.body,
+      type: message.type || "text",
+      mediaUrl: "",
+      mediaDurationSeconds: 0,
+      callId: "",
+      callMediaType: "",
+      callStatus: "",
+      callDurationSeconds: 0,
       timestamp: message.timestamp,
       fromCurrentUser: message.fromCurrentUser,
       senderId: message.fromCurrentUser ? userId : profile.id,
@@ -184,7 +204,7 @@ function seedStarterConversationsIfEmpty(userId, conversationRecords) {
       gradientStart: profile.gradientStart,
       gradientEnd: profile.gradientEnd,
       unreadCount: 0,
-      lastMessage: messages[messages.length - 1]?.body || "",
+      lastMessage: summarizeMessage(messages[messages.length - 1]) || "",
       messages,
     });
   });
@@ -231,6 +251,30 @@ function formatTimestamp(dateValue) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function summarizeMessage(message) {
+  if (!message) return "";
+  if (message.type === "voice_note") {
+    return "Voice note";
+  }
+  if (message.type === "call_event") {
+    const label = message.callMediaType === "video" ? "Video call" : "Voice call";
+    if (message.callStatus === "rejected") return `Rejected ${label.toLowerCase()}`;
+    if (message.callStatus === "missed") return `Missed ${label.toLowerCase()}`;
+    if (message.callStatus === "cancelled") return `Cancelled ${label.toLowerCase()}`;
+    if ((message.callStatus === "completed" || message.callStatus === "accepted") && Number(message.callDurationSeconds || 0) > 0) {
+      return `${label} · ${formatDuration(message.callDurationSeconds)}`;
+    }
+    return label;
+  }
+  return message.body || "";
+}
+
+function formatDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 module.exports = {

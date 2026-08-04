@@ -1,9 +1,12 @@
 const { v4: uuid } = require("uuid");
-const CallSession = require("../models/CallSession");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const User = require("../models/User");
 const { registerSwipe, sortPair } = require("../services/match-service");
+const {
+  createCallSessionWithMessage,
+  updateCallSessionWithMessage,
+} = require("../services/call-service");
 
 function userRoom(userId) {
   return `user:${userId}`;
@@ -26,6 +29,28 @@ async function publishPresence(redis, userId, status) {
       updatedAt: new Date().toISOString(),
     }),
   );
+}
+
+function mapSocketMessage(message, { author, fromCurrentUser }) {
+  return {
+    id: String(message._id),
+    author,
+    type: message.type || "text",
+    body: message.body || "",
+    mediaUrl: message.mediaUrl || "",
+    mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+    callId: message.callId || "",
+    callMediaType: message.callMediaType || "",
+    callStatus: message.callStatus || "",
+    callDurationSeconds: Number(message.callDurationSeconds || 0),
+    timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    fromCurrentUser,
+    senderId: message.senderId,
+  };
 }
 
 async function markOnline(redis, userId, socketId) {
@@ -115,15 +140,25 @@ function registerSocketHandlers(io, redis) {
         .sort({ createdAt: 1 })
         .limit(50)
         .lean();
-      socket.emit("conversation:history", { conversationId, messages });
+      socket.emit("conversation:history", {
+        conversationId,
+        messages: messages.map(message => mapSocketMessage(message, {
+          author: message.senderId === userId ? "You" : message.senderId,
+          fromCurrentUser: message.senderId === userId,
+        })),
+      });
     });
 
     socket.on("message:send", async payload => {
+      const messageType = payload.type === "voice_note" ? "voice_note" : "text";
       const message = await Message.create({
         conversationId: payload.conversationId,
         senderId: userId,
         recipientId: payload.recipientId,
-        body: payload.body,
+        type: messageType,
+        body: String(payload.body || "").trim(),
+        mediaUrl: String(payload.mediaUrl || "").trim(),
+        mediaDurationSeconds: Math.max(0, Number(payload.mediaDurationSeconds) || 0),
       });
 
       await Conversation.findOneAndUpdate(
@@ -133,7 +168,10 @@ function registerSocketHandlers(io, redis) {
 
       await redis.command.hIncrBy(`unread:${payload.recipientId}`, payload.conversationId, 1);
 
-      io.to(conversationRoom(payload.conversationId)).emit("message:new", message.toObject());
+      io.to(conversationRoom(payload.conversationId)).emit("message:new", mapSocketMessage(message, {
+        author: userId,
+        fromCurrentUser: false,
+      }));
       io.to(userRoom(payload.recipientId)).emit("conversation:unread", {
         conversationId: payload.conversationId,
         unreadDelta: 1,
@@ -159,12 +197,21 @@ function registerSocketHandlers(io, redis) {
     });
 
     socket.on("call:start", async payload => {
-      const call = await CallSession.create({
+      const { call, message } = await createCallSessionWithMessage({
         conversationId: payload.conversationId,
         callerId: userId,
         calleeId: payload.calleeId,
-        type: payload.type,
+        callType: payload.type,
       });
+      socket.emit("call:started", {
+        callId: call.id,
+        peerId: payload.calleeId,
+        conversationId: payload.conversationId,
+      });
+      io.to(conversationRoom(payload.conversationId)).emit("message:new", mapSocketMessage(message, {
+        author: userId,
+        fromCurrentUser: false,
+      }));
 
       io.to(userRoom(payload.calleeId)).emit("call:incoming", {
         id: call.id,
@@ -176,23 +223,47 @@ function registerSocketHandlers(io, redis) {
     });
 
     socket.on("call:answer", async payload => {
-      await CallSession.findByIdAndUpdate(payload.callId, { status: "accepted" });
+      const { call, message } = await updateCallSessionWithMessage({
+        callId: payload.callId,
+        status: "accepted",
+        actorId: userId,
+      });
+      if (message) {
+        io.to(conversationRoom(call.conversationId)).emit("message:new", mapSocketMessage(message, {
+          author: userId,
+          fromCurrentUser: false,
+        }));
+      }
       io.to(userRoom(payload.callerId)).emit("call:accepted", payload);
     });
 
     socket.on("call:reject", async payload => {
-      await CallSession.findByIdAndUpdate(payload.callId, {
+      const { call, message } = await updateCallSessionWithMessage({
+        callId: payload.callId,
         status: "rejected",
-        endedAt: new Date(),
+        actorId: userId,
       });
+      if (message) {
+        io.to(conversationRoom(call.conversationId)).emit("message:new", mapSocketMessage(message, {
+          author: userId,
+          fromCurrentUser: false,
+        }));
+      }
       io.to(userRoom(payload.callerId)).emit("call:rejected", payload);
     });
 
     socket.on("call:end", async payload => {
-      await CallSession.findByIdAndUpdate(payload.callId, {
+      const { call, message } = await updateCallSessionWithMessage({
+        callId: payload.callId,
         status: "ended",
-        endedAt: new Date(),
+        actorId: userId,
       });
+      if (message) {
+        io.to(conversationRoom(call.conversationId)).emit("message:new", mapSocketMessage(message, {
+          author: userId,
+          fromCurrentUser: false,
+        }));
+      }
       io.to(userRoom(payload.peerId)).emit("call:ended", payload);
     });
 

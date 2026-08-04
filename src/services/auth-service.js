@@ -66,6 +66,9 @@ function publicUser(user) {
     email: user.email || "",
     phone: user.phone ? formatPhone(user.phone) : "",
     authProvider: user.authProvider,
+    balance: Number(user.balance || 0),
+    isPremimum: Boolean(user.isPremimum),
+    isVeried: Boolean(user.isVeried),
     onboardingCompleted: Boolean(user.onboardingCompleted),
   };
 }
@@ -224,6 +227,7 @@ async function loginWithGoogle(credential) {
       displayName,
       avatarUrl,
       imageUrls: avatarUrl ? [avatarUrl] : [],
+      isVeried: true,
       onboardingCompleted: false,
       lastActiveAt: new Date(),
     });
@@ -234,6 +238,9 @@ async function loginWithGoogle(credential) {
     user.avatarUrl = user.avatarUrl || avatarUrl;
     if ((!user.imageUrls || user.imageUrls.length === 0) && avatarUrl) {
       user.imageUrls = [avatarUrl];
+    }
+    if (!user.isVeried && emailVerified) {
+      user.isVeried = true;
     }
     user.lastActiveAt = new Date();
     await user.save();
@@ -358,7 +365,6 @@ async function verifyOtp(payload = {}) {
 async function registerPhoneAccount(payload = {}) {
   const displayName = normalizeDisplayName(payload.displayName);
   requireDisplayName(displayName);
-  requireStrongEnoughPassword(payload.password);
 
   let phone;
   try {
@@ -384,10 +390,11 @@ async function registerPhoneAccount(payload = {}) {
   }
 
   const imageUrls = normalizeImageUrls(payload.imageUrls);
+  const password = String(payload.password || "");
   const user = await User.create({
     _id: crypto.randomUUID(),
     phone,
-    passwordHash: hashPassword(payload.password),
+    passwordHash: password ? hashPassword(password) : "",
     displayName,
     age: normalizeAge(payload.age),
     city: normalizeOptionalString(payload.city),
@@ -404,6 +411,38 @@ async function registerPhoneAccount(payload = {}) {
     lastActiveAt: new Date(),
   });
 
+  return publicUser(user);
+}
+
+async function linkPhoneAccountEmail(payload = {}) {
+  const userId = String(payload.userId || "").trim();
+  const email = normalizeEmail(payload.email);
+  requireStrongEnoughPassword(payload.password);
+
+  if (!userId) {
+    throw new AppError(400, "User id is required");
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError(400, "Enter a valid email address");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError(404, "Account not found");
+  }
+  if (!user.phone) {
+    throw new AppError(400, "Only phone accounts can link an email here");
+  }
+
+  const existing = await User.findOne({ email });
+  if (existing && String(existing._id) !== String(user._id)) {
+    throw new AppError(409, "Email already registered");
+  }
+
+  user.email = email;
+  user.passwordHash = hashPassword(payload.password);
+  user.lastActiveAt = new Date();
+  await user.save();
   return publicUser(user);
 }
 
@@ -488,6 +527,7 @@ async function completeOnboarding(payload = {}) {
 module.exports = {
   AppError,
   completeOnboarding,
+  linkPhoneAccountEmail,
   loginAccount,
   loginPhoneAccount,
   loginPhoneWithOtp,
