@@ -86,6 +86,8 @@ function activeSocketKey(userId) {
   return `realtime:active:${userId}`;
 }
 
+const PRESENCE_GRACE_MS = 60 * 1000;
+
 async function buildBootstrapPayload(userId, redis = null) {
   await ensureSeedData();
   const currentUser = await User.findById(userId).lean();
@@ -152,10 +154,14 @@ async function buildBootstrapPayload(userId, redis = null) {
         senderId: message.senderId,
       };
     });
+    const presence = await presenceStatus(peer.lastActiveAt, peerId, redis);
     conversationRecords.push({
       id: String(conversation._id),
       name: peer.displayName,
-      status: await presenceStatus(peer.lastActiveAt, peerId, redis),
+      status: presence.label,
+      presenceState: presence.state,
+      lastActiveAt: presence.lastActiveAt,
+      lastActiveEpochMs: presence.lastActiveEpochMs,
       recipientId: peerId,
       gradientStart: profileGradient(peerId).start,
       gradientEnd: profileGradient(peerId).end,
@@ -234,16 +240,39 @@ async function presenceStatus(lastActiveAt, userId, redis = null) {
   if (redis?.command && userId) {
     const activeSockets = Number(await redis.command.sCard(activeSocketKey(userId)));
     if (activeSockets > 0) {
-      return "Online";
+      return {
+        state: "online",
+        label: "Online",
+        lastActiveAt: "",
+        lastActiveEpochMs: Date.now(),
+      };
     }
   }
-  if (!lastActiveAt) return "Recently active";
+  if (!lastActiveAt) {
+    return {
+      state: "offline",
+      label: "Recently active",
+      lastActiveAt: "",
+      lastActiveEpochMs: 0,
+    };
+  }
   const lastSeen = new Date(lastActiveAt);
   const elapsedMs = Date.now() - lastSeen.getTime();
-  if (elapsedMs <= 90 * 1000) {
-    return "Online";
+  const lastSeenLabel = formatTimestamp(lastSeen);
+  if (elapsedMs <= PRESENCE_GRACE_MS) {
+    return {
+      state: "recently_active",
+      label: "Online",
+      lastActiveAt: lastSeenLabel,
+      lastActiveEpochMs: lastSeen.getTime(),
+    };
   }
-  return `Last seen ${formatTimestamp(lastSeen)}`;
+  return {
+    state: "offline",
+    label: `Last seen ${lastSeenLabel}`,
+    lastActiveAt: lastSeenLabel,
+    lastActiveEpochMs: lastSeen.getTime(),
+  };
 }
 
 function summarizeMessage(message) {

@@ -11,6 +11,7 @@ const {
 } = require("../services/call-service");
 
 const REALTIME_FANOUT_CHANNEL = "realtime:fanout";
+const PRESENCE_GRACE_MS = 60 * 1000;
 
 function activeSocketKey(userId) {
   return `realtime:active:${userId}`;
@@ -86,7 +87,15 @@ async function isUserOnline(redis, userId) {
   return Number(await redis.command.sCard(activeSocketKey(userId))) > 0;
 }
 
-async function publishPresenceToPeers(registry, redis, userId, status) {
+function formatLastActiveAt(date = new Date()) {
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+async function publishPresenceToPeers(registry, redis, userId, status, lastActiveAtDate = new Date()) {
   if (!userId) return;
   const conversations = await Conversation.find({ participantIds: userId }).select("participantIds").lean();
   const peers = new Set();
@@ -102,11 +111,8 @@ async function publishPresenceToPeers(registry, redis, userId, status) {
     payload: {
       userId,
       status,
-      lastActiveAt: new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
+      lastActiveAt: formatLastActiveAt(lastActiveAtDate),
+      lastActiveEpochMs: lastActiveAtDate.getTime(),
     },
   };
   await Promise.all(Array.from(peers, peerId => registry.dispatch(peerId, payload)));
@@ -116,6 +122,7 @@ async function registerRealtimeHandlers(server, redis) {
   const wss = new WebSocketServer({ server, path: "/ws" });
   const workerId = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
   const registry = createConnectionRegistry({ redis, workerId });
+  const offlineTimers = new Map();
 
   if (redis?.subscriber) {
     await redis.subscriber.subscribe(REALTIME_FANOUT_CHANNEL, rawMessage => {
@@ -141,6 +148,11 @@ async function registerRealtimeHandlers(server, redis) {
 
     const connectionId = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 12)}`;
     socket.data = { userId, displayName, connectionId };
+    const existingTimer = offlineTimers.get(userId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      offlineTimers.delete(userId);
+    }
     registry.add(userId, socket);
     await trackActiveConnection(redis, userId, connectionId);
     await updateUserLastActiveAt(userId);
@@ -163,8 +175,19 @@ async function registerRealtimeHandlers(server, redis) {
       console.log(`[realtime] disconnected userId=${userId}`);
       registry.remove(userId, socket);
       const stillOnline = await untrackActiveConnection(redis, userId, connectionId);
+      const disconnectedAt = new Date();
       await updateUserLastActiveAt(userId);
-      await publishPresenceToPeers(registry, redis, userId, stillOnline > 0 ? "online" : "offline");
+      if (stillOnline > 0) {
+        await publishPresenceToPeers(registry, redis, userId, "online", disconnectedAt);
+        return;
+      }
+      await publishPresenceToPeers(registry, redis, userId, "recently_active", disconnectedAt);
+      const timer = setTimeout(async () => {
+        offlineTimers.delete(userId);
+        if (await isUserOnline(redis, userId)) return;
+        await publishPresenceToPeers(registry, redis, userId, "offline", disconnectedAt);
+      }, PRESENCE_GRACE_MS);
+      offlineTimers.set(userId, timer);
     });
   });
 }
@@ -197,7 +220,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
 
   if (type === "presence:ping") {
     const status = await isUserOnline(registry.redis || null, userId) ? "online" : "offline";
-    await publishPresenceToPeers(registry, registry.redis || null, userId, status);
+    await publishPresenceToPeers(registry, registry.redis || null, userId, status, new Date());
     return;
   }
 
