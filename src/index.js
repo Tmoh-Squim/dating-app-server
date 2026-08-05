@@ -20,7 +20,7 @@ const {
 const { absoluteUploadDir, callRecordingUpload, profileImageUpload, voiceNoteUpload } = require("./lib/uploads");
 const { connectMongo } = require("./lib/mongo");
 const { createRedisClients } = require("./lib/redis");
-const { buildBootstrapPayload, ensureSeedData } = require("./services/bootstrap-service");
+const { buildBootstrapPayload, ensureSeedData, fetchConversationMessagesPage } = require("./services/bootstrap-service");
 const { removeProfileImages, toBoolean, uploadCallRecording, uploadProfileImages, uploadVoiceNote } = require("./services/upload-service");
 const { registerRealtimeHandlers } = require("./socket/registerRealtimeHandlers");
 const { registerSocketHandlers } = require("./socket/registerSocketHandlers");
@@ -85,6 +85,25 @@ async function bootstrap() {
     await ensureSeedData();
     const payload = await buildBootstrapPayload(userId, redis);
     response.json(payload);
+  });
+
+  app.get("/api/conversations/:conversationId/messages", async (request, response) => {
+    try {
+      const userId = String(request.query.userId || "");
+      const beforeMessageId = String(request.query.beforeMessageId || "");
+      const limit = Number(request.query.limit || 24);
+      const payload = await fetchConversationMessagesPage(
+        userId,
+        String(request.params.conversationId || ""),
+        {
+          beforeMessageId,
+          limit,
+        },
+      );
+      response.json(payload);
+    } catch (error) {
+      respondAuthError(response, "conversations/messages", error, "Unable to load older messages right now. Please try again later.");
+    }
   });
 
   app.post("/api/auth/register", async (request, response) => {

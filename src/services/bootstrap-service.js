@@ -87,6 +87,68 @@ function activeSocketKey(userId) {
 }
 
 const PRESENCE_GRACE_MS = 60 * 1000;
+const DEFAULT_MESSAGES_PAGE_SIZE = 24;
+
+function mapBootstrapMessage(rawMessage, { userId, author }) {
+  const message = decryptMessageDocument(rawMessage);
+  return {
+    id: String(message._id),
+    author,
+    type: message.type || "text",
+    body: message.body,
+    mediaUrl: message.mediaUrl || "",
+    mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+    callId: message.callId || "",
+    callMediaType: message.callMediaType || "",
+    callStatus: message.callStatus || "",
+    callDurationSeconds: Number(message.callDurationSeconds || 0),
+    timestamp: formatTimestamp(message.createdAt),
+    fromCurrentUser: message.senderId === userId,
+    senderId: message.senderId,
+  };
+}
+
+async function fetchConversationMessagesPage(userId, conversationId, { beforeMessageId = "", limit = DEFAULT_MESSAGES_PAGE_SIZE } = {}) {
+  const conversation = await Conversation.findOne({
+    _id: conversationId,
+    participantIds: userId,
+  }).lean();
+  if (!conversation) {
+    const error = new Error("Conversation not found");
+    error.status = 404;
+    throw error;
+  }
+
+  const peerId = (conversation.participantIds || []).find(id => id !== userId);
+  const peer = peerId ? await User.findById(peerId).lean() : null;
+  const safeLimit = Math.max(1, Math.min(Number(limit) || DEFAULT_MESSAGES_PAGE_SIZE, 100));
+  const query = { conversationId };
+  if (beforeMessageId) {
+    query._id = { $lt: beforeMessageId };
+  }
+
+  const fetchedMessages = await Message.find(query)
+    .sort({ _id: -1 })
+    .limit(safeLimit + 1)
+    .lean();
+
+  const hasMore = fetchedMessages.length > safeLimit;
+  const pageMessagesDescending = hasMore ? fetchedMessages.slice(0, safeLimit) : fetchedMessages;
+  const pageMessagesAscending = pageMessagesDescending.reverse();
+  const messages = pageMessagesAscending.map(rawMessage =>
+    mapBootstrapMessage(rawMessage, {
+      userId,
+      author: rawMessage.senderId === userId ? "You" : (peer?.displayName || rawMessage.senderId),
+    }),
+  );
+
+  return {
+    conversationId,
+    messages,
+    hasMore,
+    nextCursor: hasMore && messages.length > 0 ? messages[0].id : null,
+  };
+}
 
 async function buildBootstrapPayload(userId, redis = null) {
   await ensureSeedData();
@@ -135,25 +197,10 @@ async function buildBootstrapPayload(userId, redis = null) {
     if (!peerId) continue;
     const peer = await User.findById(peerId).lean();
     if (!peer) continue;
-    const dbMessages = await Message.find({ conversationId: conversation._id }).sort({ createdAt: 1 }).lean();
-    const messages = dbMessages.map(rawMessage => {
-      const message = decryptMessageDocument(rawMessage);
-      return {
-        id: String(message._id),
-        author: message.senderId === userId ? "You" : peer.displayName,
-        type: message.type || "text",
-        body: message.body,
-        mediaUrl: message.mediaUrl || "",
-        mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
-        callId: message.callId || "",
-        callMediaType: message.callMediaType || "",
-        callStatus: message.callStatus || "",
-        callDurationSeconds: Number(message.callDurationSeconds || 0),
-        timestamp: formatTimestamp(message.createdAt),
-        fromCurrentUser: message.senderId === userId,
-        senderId: message.senderId,
-      };
+    const messagePage = await fetchConversationMessagesPage(userId, String(conversation._id), {
+      limit: DEFAULT_MESSAGES_PAGE_SIZE,
     });
+    const messages = messagePage.messages;
     const presence = await presenceStatus(peer.lastActiveAt, peerId, redis);
     conversationRecords.push({
       id: String(conversation._id),
@@ -168,6 +215,10 @@ async function buildBootstrapPayload(userId, redis = null) {
       unreadCount: 0,
       lastMessage: summarizeMessage(messages[messages.length - 1]) || "",
       messages,
+      messagePage: {
+        hasMore: messagePage.hasMore,
+        nextCursor: messagePage.nextCursor,
+      },
     });
   }
 
@@ -188,8 +239,17 @@ async function buildBootstrapPayload(userId, redis = null) {
     },
     needsOnboarding: false,
     profiles: profileCards,
-    conversations: conversationRecords.map(({ messages, ...conversation }) => conversation),
+    conversations: conversationRecords.map(({ messages, messagePage, ...conversation }) => conversation),
     messagesByConversation: Object.fromEntries(conversationRecords.map(record => [record.id, record.messages])),
+    messagePaginationByConversation: Object.fromEntries(
+      conversationRecords.map(record => [
+        record.id,
+        {
+          hasMore: record.messagePage.hasMore,
+          nextCursor: record.messagePage.nextCursor,
+        },
+      ]),
+    ),
   };
 }
 
@@ -302,4 +362,5 @@ function formatDuration(totalSeconds) {
 module.exports = {
   ensureSeedData,
   buildBootstrapPayload,
+  fetchConversationMessagesPage,
 };
