@@ -56,18 +56,22 @@ function registerRealtimeHandlers(server) {
 
     socket.data = { userId, displayName };
     registry.add(userId, socket);
+    console.log(`[realtime] connected userId=${userId} displayName=${displayName}`);
     socket.send(JSON.stringify({ type: "session:ready", payload: { userId } }));
 
     socket.on("message", async raw => {
       try {
         const { type, payload } = JSON.parse(String(raw));
+        console.log(`[realtime] received type=${type} userId=${userId} payload=${JSON.stringify(payload || {})}`);
         await handleRealtimeEvent({ type, payload, userId, registry, socket });
       } catch (error) {
+        console.error(`[realtime] handler error userId=${userId} message=${error.message}`);
         socket.send(JSON.stringify({ type: "error", payload: { message: error.message } }));
       }
     });
 
     socket.on("close", () => {
+      console.log(`[realtime] disconnected userId=${userId}`);
       registry.remove(userId, socket);
     });
   });
@@ -111,6 +115,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
 
   if (type === "message:send") {
     const conversation = await ensureConversationBetweenUsers(userId, payload.recipientId);
+    console.log(`[realtime] message:send resolved conversationId=${String(conversation._id)} senderId=${userId} recipientId=${payload.recipientId} messageType=${payload.type}`);
     const messageType = payload.type === "voice_note" ? "voice_note" : "text";
     const message = await Message.create({
       conversationId: String(conversation._id),
@@ -128,6 +133,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       { _id: String(conversation._id) },
       { lastMessageAt: new Date() },
     );
+    console.log(`[realtime] message persisted messageId=${String(message._id)} conversationId=${String(conversation._id)} senderId=${userId}`);
 
     const event = {
       type: "message:new",
@@ -161,6 +167,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       calleeId: payload.calleeId,
       callType: payload.callType,
     });
+    console.log(`[realtime] call:start created callId=${String(call._id)} conversationId=${call.conversationId} callerId=${userId} calleeId=${payload.calleeId} callType=${payload.callType}`);
     socket.send(JSON.stringify({
       type: "call:started",
       payload: {
@@ -214,6 +221,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       status: statusMap[type],
       actorId: userId,
     });
+    console.log(`[realtime] ${type} updated callId=${payload.callId} conversationId=${call.conversationId} actorId=${userId} status=${statusMap[type]}`);
     if (message) {
       const callerAuthor = call.callerId === userId ? "You" : payload.actorName || "Call";
       const calleeAuthor = call.calleeId === userId ? "You" : payload.actorName || "Call";
@@ -243,6 +251,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
   }
 
   if (type === "webrtc:offer" || type === "webrtc:answer" || type === "webrtc:ice-candidate") {
+    console.log(`[realtime] forwarding ${type} fromUserId=${userId} peerId=${payload.peerId} conversationId=${payload.conversationId}`);
     registry.send(payload.peerId, { type, payload: { ...payload, fromUserId: userId } });
     return;
   }

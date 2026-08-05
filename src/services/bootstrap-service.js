@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const User = require("../models/User");
-const { messagesByConversation, profiles } = require("../data/sampleData");
+const { profiles } = require("../data/sampleData");
 const { hashPassword, verifyPassword } = require("../lib/password");
 const { decryptMessageDocument } = require("../lib/messageCrypto");
 
@@ -161,7 +161,7 @@ async function buildBootstrapPayload(userId) {
     });
   }
 
-  seedStarterConversationsIfEmpty(userId, conversationRecords);
+  console.log(`[bootstrap] userId=${userId} profiles=${profileCards.length} conversations=${conversationRecords.length}`);
 
   return {
     user: {
@@ -181,39 +181,6 @@ async function buildBootstrapPayload(userId) {
     conversations: conversationRecords.map(({ messages, ...conversation }) => conversation),
     messagesByConversation: Object.fromEntries(conversationRecords.map(record => [record.id, record.messages])),
   };
-}
-
-function seedStarterConversationsIfEmpty(userId, conversationRecords) {
-  if (conversationRecords.length > 0) return;
-  const starterProfiles = profiles.slice(0, 3);
-  starterProfiles.forEach(profile => {
-    const messages = (messagesByConversation[profile.id] || []).map((message, index) => ({
-      id: `${profile.id}-${index}`,
-      author: message.fromCurrentUser ? "You" : profile.name,
-      body: message.body,
-      type: message.type || "text",
-      mediaUrl: "",
-      mediaDurationSeconds: 0,
-      callId: "",
-      callMediaType: "",
-      callStatus: "",
-      callDurationSeconds: 0,
-      timestamp: message.timestamp,
-      fromCurrentUser: message.fromCurrentUser,
-      senderId: message.fromCurrentUser ? userId : profile.id,
-    }));
-    conversationRecords.push({
-      id: profile.id,
-      name: profile.name,
-      status: "Recently active",
-      recipientId: profile.id,
-      gradientStart: profile.gradientStart,
-      gradientEnd: profile.gradientEnd,
-      unreadCount: 0,
-      lastMessage: summarizeMessage(messages[messages.length - 1]) || "",
-      messages,
-    });
-  });
 }
 
 function profileGradient(id) {
