@@ -170,6 +170,8 @@ async function buildBootstrapPayload(userId) {
       balance: Number(currentUser.balance || 0),
       isPremimum: Boolean(currentUser.isPremimum),
       isVeried: Boolean(currentUser.isVeried),
+      avatarUrl: currentUser.avatarUrl || "",
+      imageUrls: currentUser.imageUrls || [],
     },
     transport: {
       websocketUrl: "/ws",

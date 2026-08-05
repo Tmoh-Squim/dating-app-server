@@ -40,7 +40,7 @@ async function uploadProfileImages({ userId, files = [], replaceAll = false, rep
   }
 
   user.imageUrls = nextUrls;
-  user.avatarUrl = nextUrls[0] || "";
+  user.avatarUrl = replaceAvatar ? (newUrls[0] || nextUrls[0] || "") : (user.avatarUrl || nextUrls[0] || "");
   user.lastActiveAt = new Date();
   await user.save();
 
