@@ -15,6 +15,7 @@ module.exports = {
     "Your Proximo verification code is {{code}}. It expires in {{minutes}} minutes.",
   otpLength: Number(process.env.OTP_LENGTH || 6),
   otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS || 300),
+  messageEncryptionKey: process.env.MESSAGE_ENCRYPTION_KEY || "",
   advantaBaseUrl: process.env.ADVANTA_BASE_URL || "https://quicksms.advantasms.com",
   advantaApiKey: process.env.ADVANTA_API_KEY || "",
   advantaPartnerId: process.env.ADVANTA_PARTNER_ID || "",

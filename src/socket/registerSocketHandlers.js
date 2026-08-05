@@ -2,6 +2,7 @@ const { v4: uuid } = require("uuid");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const User = require("../models/User");
+const { decryptMessageDocument, encryptMessageDocumentFields } = require("../lib/messageCrypto");
 const { registerSwipe, sortPair } = require("../services/match-service");
 const {
   createCallSessionWithMessage,
@@ -32,24 +33,25 @@ async function publishPresence(redis, userId, status) {
 }
 
 function mapSocketMessage(message, { author, fromCurrentUser }) {
+  const decryptedMessage = decryptMessageDocument(message);
   return {
-    id: String(message._id),
+    id: String(decryptedMessage._id),
     author,
-    type: message.type || "text",
-    body: message.body || "",
-    mediaUrl: message.mediaUrl || "",
-    mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
-    callId: message.callId || "",
-    callMediaType: message.callMediaType || "",
-    callStatus: message.callStatus || "",
-    callDurationSeconds: Number(message.callDurationSeconds || 0),
-    timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", {
+    type: decryptedMessage.type || "text",
+    body: decryptedMessage.body || "",
+    mediaUrl: decryptedMessage.mediaUrl || "",
+    mediaDurationSeconds: Number(decryptedMessage.mediaDurationSeconds || 0),
+    callId: decryptedMessage.callId || "",
+    callMediaType: decryptedMessage.callMediaType || "",
+    callStatus: decryptedMessage.callStatus || "",
+    callDurationSeconds: Number(decryptedMessage.callDurationSeconds || 0),
+    timestamp: new Date(decryptedMessage.createdAt).toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
     }),
     fromCurrentUser,
-    senderId: message.senderId,
+    senderId: decryptedMessage.senderId,
   };
 }
 
@@ -156,8 +158,10 @@ function registerSocketHandlers(io, redis) {
         senderId: userId,
         recipientId: payload.recipientId,
         type: messageType,
-        body: String(payload.body || "").trim(),
-        mediaUrl: String(payload.mediaUrl || "").trim(),
+        ...encryptMessageDocumentFields({
+          body: String(payload.body || "").trim(),
+          mediaUrl: String(payload.mediaUrl || "").trim(),
+        }),
         mediaDurationSeconds: Math.max(0, Number(payload.mediaDurationSeconds) || 0),
       });
 

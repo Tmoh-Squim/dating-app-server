@@ -1,6 +1,7 @@
 const CallSession = require("../models/CallSession");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const { encryptMessageDocumentFields } = require("../lib/messageCrypto");
 
 function computeCallMessageStatus(call) {
   if (call.status === "accepted") return "accepted";
@@ -63,7 +64,9 @@ async function createCallSessionWithMessage({
     senderId: callerId,
     recipientId: calleeId,
     type: "call_event",
-    body: buildCallEventBody({ callType, callStatus: "started" }),
+    ...encryptMessageDocumentFields({
+      body: buildCallEventBody({ callType, callStatus: "started" }),
+    }),
     callId: String(call._id),
     callMediaType: callType,
     callStatus: "started",
@@ -116,10 +119,12 @@ async function updateCallSessionWithMessage({
       {
         senderId: actorId || call.callerId,
         recipientId: actorId === call.calleeId ? call.callerId : call.calleeId,
-        body: buildCallEventBody({
-          callType: call.type,
-          callStatus,
-          durationSeconds: Number(call.durationSeconds || 0),
+        ...encryptMessageDocumentFields({
+          body: buildCallEventBody({
+            callType: call.type,
+            callStatus,
+            durationSeconds: Number(call.durationSeconds || 0),
+          }),
         }),
         callStatus,
         callDurationSeconds: Number(call.durationSeconds || 0),

@@ -4,6 +4,7 @@ const Message = require("../models/Message");
 const User = require("../models/User");
 const { messagesByConversation, profiles } = require("../data/sampleData");
 const { hashPassword, verifyPassword } = require("../lib/password");
+const { decryptMessageDocument } = require("../lib/messageCrypto");
 
 async function ensureSeedData() {
   for (const profile of profiles) {
@@ -129,21 +130,24 @@ async function buildBootstrapPayload(userId) {
     const peer = await User.findById(peerId).lean();
     if (!peer) continue;
     const dbMessages = await Message.find({ conversationId: conversation._id }).sort({ createdAt: 1 }).lean();
-    const messages = dbMessages.map(message => ({
-      id: String(message._id),
-      author: message.senderId === userId ? "You" : peer.displayName,
-      type: message.type || "text",
-      body: message.body,
-      mediaUrl: message.mediaUrl || "",
-      mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
-      callId: message.callId || "",
-      callMediaType: message.callMediaType || "",
-      callStatus: message.callStatus || "",
-      callDurationSeconds: Number(message.callDurationSeconds || 0),
-      timestamp: formatTimestamp(message.createdAt),
-      fromCurrentUser: message.senderId === userId,
-      senderId: message.senderId,
-    }));
+    const messages = dbMessages.map(rawMessage => {
+      const message = decryptMessageDocument(rawMessage);
+      return {
+        id: String(message._id),
+        author: message.senderId === userId ? "You" : peer.displayName,
+        type: message.type || "text",
+        body: message.body,
+        mediaUrl: message.mediaUrl || "",
+        mediaDurationSeconds: Number(message.mediaDurationSeconds || 0),
+        callId: message.callId || "",
+        callMediaType: message.callMediaType || "",
+        callStatus: message.callStatus || "",
+        callDurationSeconds: Number(message.callDurationSeconds || 0),
+        timestamp: formatTimestamp(message.createdAt),
+        fromCurrentUser: message.senderId === userId,
+        senderId: message.senderId,
+      };
+    });
     conversationRecords.push({
       id: String(conversation._id),
       name: peer.displayName,
