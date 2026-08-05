@@ -10,10 +10,17 @@ const {
   updateCallSessionWithMessage,
 } = require("../services/call-service");
 
-function createConnectionRegistry() {
+const REALTIME_FANOUT_CHANNEL = "realtime:fanout";
+
+function activeSocketKey(userId) {
+  return `realtime:active:${userId}`;
+}
+
+function createConnectionRegistry({ redis, workerId }) {
   const connections = new Map();
 
   return {
+    redis,
     add(userId, socket) {
       if (!connections.has(userId)) {
         connections.set(userId, new Set());
@@ -28,7 +35,7 @@ function createConnectionRegistry() {
         connections.delete(userId);
       }
     },
-    send(userId, payload) {
+    sendLocal(userId, payload) {
       const bucket = connections.get(userId);
       if (!bucket) return;
       const serialized = JSON.stringify(payload);
@@ -38,6 +45,18 @@ function createConnectionRegistry() {
         }
       });
     },
+    async dispatch(userId, payload) {
+      this.sendLocal(userId, payload);
+      if (!redis?.publisher) return;
+      await redis.publisher.publish(
+        REALTIME_FANOUT_CHANNEL,
+        JSON.stringify({
+          workerId,
+          userId,
+          payload,
+        }),
+      );
+    },
   };
 }
 
@@ -46,7 +65,28 @@ async function updateUserLastActiveAt(userId) {
   await User.findByIdAndUpdate(userId, { lastActiveAt: new Date() });
 }
 
-async function publishPresenceToPeers(registry, userId, status) {
+async function trackActiveConnection(redis, userId, connectionId) {
+  if (!redis?.command || !userId || !connectionId) return 0;
+  await redis.command.sAdd(activeSocketKey(userId), connectionId);
+  return Number(await redis.command.sCard(activeSocketKey(userId)));
+}
+
+async function untrackActiveConnection(redis, userId, connectionId) {
+  if (!redis?.command || !userId || !connectionId) return 0;
+  await redis.command.sRem(activeSocketKey(userId), connectionId);
+  const remaining = Number(await redis.command.sCard(activeSocketKey(userId)));
+  if (remaining === 0) {
+    await redis.command.del(activeSocketKey(userId));
+  }
+  return remaining;
+}
+
+async function isUserOnline(redis, userId) {
+  if (!redis?.command || !userId) return false;
+  return Number(await redis.command.sCard(activeSocketKey(userId))) > 0;
+}
+
+async function publishPresenceToPeers(registry, redis, userId, status) {
   if (!userId) return;
   const conversations = await Conversation.find({ participantIds: userId }).select("participantIds").lean();
   const peers = new Set();
@@ -69,12 +109,25 @@ async function publishPresenceToPeers(registry, userId, status) {
       }),
     },
   };
-  peers.forEach(peerId => registry.send(peerId, payload));
+  await Promise.all(Array.from(peers, peerId => registry.dispatch(peerId, payload)));
 }
 
-function registerRealtimeHandlers(server) {
+async function registerRealtimeHandlers(server, redis) {
   const wss = new WebSocketServer({ server, path: "/ws" });
-  const registry = createConnectionRegistry();
+  const workerId = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
+  const registry = createConnectionRegistry({ redis, workerId });
+
+  if (redis?.subscriber) {
+    await redis.subscriber.subscribe(REALTIME_FANOUT_CHANNEL, rawMessage => {
+      try {
+        const message = JSON.parse(String(rawMessage));
+        if (message.workerId === workerId) return;
+        registry.sendLocal(message.userId, message.payload);
+      } catch (error) {
+        console.error(`[realtime] fanout subscribe error message=${error.message}`);
+      }
+    });
+  }
 
   wss.on("connection", async (socket, request) => {
     const url = new URL(request.url, "http://localhost");
@@ -86,10 +139,12 @@ function registerRealtimeHandlers(server) {
       return;
     }
 
-    socket.data = { userId, displayName };
+    const connectionId = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 12)}`;
+    socket.data = { userId, displayName, connectionId };
     registry.add(userId, socket);
+    await trackActiveConnection(redis, userId, connectionId);
     await updateUserLastActiveAt(userId);
-    await publishPresenceToPeers(registry, userId, "online");
+    await publishPresenceToPeers(registry, redis, userId, "online");
     console.log(`[realtime] connected userId=${userId} displayName=${displayName}`);
     socket.send(JSON.stringify({ type: "session:ready", payload: { userId } }));
 
@@ -107,8 +162,9 @@ function registerRealtimeHandlers(server) {
     socket.on("close", async () => {
       console.log(`[realtime] disconnected userId=${userId}`);
       registry.remove(userId, socket);
+      const stillOnline = await untrackActiveConnection(redis, userId, connectionId);
       await updateUserLastActiveAt(userId);
-      await publishPresenceToPeers(registry, userId, "offline");
+      await publishPresenceToPeers(registry, redis, userId, stillOnline > 0 ? "online" : "offline");
     });
   });
 }
@@ -140,12 +196,13 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
   await updateUserLastActiveAt(userId);
 
   if (type === "presence:ping") {
-    await publishPresenceToPeers(registry, userId, "online");
+    const status = await isUserOnline(registry.redis || null, userId) ? "online" : "offline";
+    await publishPresenceToPeers(registry, registry.redis || null, userId, status);
     return;
   }
 
   if (type === "typing:start" || type === "typing:stop") {
-    registry.send(payload.peerId, {
+    await registry.dispatch(payload.peerId, {
       type: "typing:update",
       payload: {
         conversationId: payload.conversationId,
@@ -186,7 +243,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       },
     };
 
-    registry.send(payload.recipientId, event);
+    await registry.dispatch(payload.recipientId, event);
     socket.send(
       JSON.stringify({
         type: "message:ack",
@@ -219,7 +276,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
         conversationId: call.conversationId,
       },
     }));
-    registry.send(payload.calleeId, {
+    await registry.dispatch(payload.calleeId, {
       type: "message:new",
       payload: {
         conversationId: call.conversationId,
@@ -240,7 +297,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
         }),
       },
     }));
-    registry.send(payload.calleeId, {
+    await registry.dispatch(payload.calleeId, {
       type: "call:incoming",
       payload: {
         id: String(call._id),
@@ -268,7 +325,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
     if (message) {
       const callerAuthor = call.callerId === userId ? "You" : payload.actorName || "Call";
       const calleeAuthor = call.calleeId === userId ? "You" : payload.actorName || "Call";
-      registry.send(call.callerId, {
+      await registry.dispatch(call.callerId, {
         type: "message:new",
         payload: {
           conversationId: call.conversationId,
@@ -278,7 +335,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
           }),
         },
       });
-      registry.send(call.calleeId, {
+      await registry.dispatch(call.calleeId, {
         type: "message:new",
         payload: {
           conversationId: call.conversationId,
@@ -289,13 +346,13 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
         },
       });
     }
-    registry.send(payload.peerId, { type, payload: { ...payload, actorId: userId } });
+    await registry.dispatch(payload.peerId, { type, payload: { ...payload, actorId: userId } });
     return;
   }
 
   if (type === "webrtc:offer" || type === "webrtc:answer" || type === "webrtc:ice-candidate") {
     console.log(`[realtime] forwarding ${type} fromUserId=${userId} peerId=${payload.peerId} conversationId=${payload.conversationId}`);
-    registry.send(payload.peerId, { type, payload: { ...payload, fromUserId: userId } });
+    await registry.dispatch(payload.peerId, { type, payload: { ...payload, fromUserId: userId } });
     return;
   }
 

@@ -82,7 +82,11 @@ async function loginAccount(email, password) {
   };
 }
 
-async function buildBootstrapPayload(userId) {
+function activeSocketKey(userId) {
+  return `realtime:active:${userId}`;
+}
+
+async function buildBootstrapPayload(userId, redis = null) {
   await ensureSeedData();
   const currentUser = await User.findById(userId).lean();
   if (!currentUser) {
@@ -151,7 +155,7 @@ async function buildBootstrapPayload(userId) {
     conversationRecords.push({
       id: String(conversation._id),
       name: peer.displayName,
-      status: presenceStatus(peer.lastActiveAt),
+      status: await presenceStatus(peer.lastActiveAt, peerId, redis),
       recipientId: peerId,
       gradientStart: profileGradient(peerId).start,
       gradientEnd: profileGradient(peerId).end,
@@ -226,7 +230,13 @@ function formatTimestamp(dateValue) {
   });
 }
 
-function presenceStatus(lastActiveAt) {
+async function presenceStatus(lastActiveAt, userId, redis = null) {
+  if (redis?.command && userId) {
+    const activeSockets = Number(await redis.command.sCard(activeSocketKey(userId)));
+    if (activeSockets > 0) {
+      return "Online";
+    }
+  }
   if (!lastActiveAt) return "Recently active";
   const lastSeen = new Date(lastActiveAt);
   const elapsedMs = Date.now() - lastSeen.getTime();

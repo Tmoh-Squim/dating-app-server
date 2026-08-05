@@ -83,7 +83,7 @@ async function bootstrap() {
   app.get("/api/bootstrap", async (request, response) => {
     const userId = String(request.query.userId || "");
     await ensureSeedData();
-    const payload = await buildBootstrapPayload(userId);
+    const payload = await buildBootstrapPayload(userId, redis);
     response.json(payload);
   });
 
@@ -241,7 +241,7 @@ async function bootstrap() {
   io.adapter(createAdapter(redis.adapterPublisher, redis.adapterSubscriber));
 
   registerSocketHandlers(io, redis);
-  registerRealtimeHandlers(server);
+  await registerRealtimeHandlers(server, redis);
 
   server.listen(port, () => {
     console.log(`Proximo server running on http://localhost:${port}`);
