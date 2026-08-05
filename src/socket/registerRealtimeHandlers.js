@@ -1,6 +1,7 @@
 const { WebSocketServer } = require("ws");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const User = require("../models/User");
 const { decryptMessageDocument, encryptMessageDocumentFields } = require("../lib/messageCrypto");
 const { ensureConversationBetweenUsers } = require("../services/conversation-service");
 const { registerSwipe } = require("../services/match-service");
@@ -40,11 +41,42 @@ function createConnectionRegistry() {
   };
 }
 
+async function updateUserLastActiveAt(userId) {
+  if (!userId) return;
+  await User.findByIdAndUpdate(userId, { lastActiveAt: new Date() });
+}
+
+async function publishPresenceToPeers(registry, userId, status) {
+  if (!userId) return;
+  const conversations = await Conversation.find({ participantIds: userId }).select("participantIds").lean();
+  const peers = new Set();
+  conversations.forEach(conversation => {
+    (conversation.participantIds || []).forEach(participantId => {
+      if (participantId && participantId !== userId) {
+        peers.add(participantId);
+      }
+    });
+  });
+  const payload = {
+    type: "presence:update",
+    payload: {
+      userId,
+      status,
+      lastActiveAt: new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+    },
+  };
+  peers.forEach(peerId => registry.send(peerId, payload));
+}
+
 function registerRealtimeHandlers(server) {
   const wss = new WebSocketServer({ server, path: "/ws" });
   const registry = createConnectionRegistry();
 
-  wss.on("connection", (socket, request) => {
+  wss.on("connection", async (socket, request) => {
     const url = new URL(request.url, "http://localhost");
     const userId = url.searchParams.get("userId");
     const displayName = url.searchParams.get("displayName") || "You";
@@ -56,6 +88,8 @@ function registerRealtimeHandlers(server) {
 
     socket.data = { userId, displayName };
     registry.add(userId, socket);
+    await updateUserLastActiveAt(userId);
+    await publishPresenceToPeers(registry, userId, "online");
     console.log(`[realtime] connected userId=${userId} displayName=${displayName}`);
     socket.send(JSON.stringify({ type: "session:ready", payload: { userId } }));
 
@@ -70,9 +104,11 @@ function registerRealtimeHandlers(server) {
       }
     });
 
-    socket.on("close", () => {
+    socket.on("close", async () => {
       console.log(`[realtime] disconnected userId=${userId}`);
       registry.remove(userId, socket);
+      await updateUserLastActiveAt(userId);
+      await publishPresenceToPeers(registry, userId, "offline");
     });
   });
 }
@@ -101,6 +137,13 @@ function mapCallPayload(message, { author, fromCurrentUser }) {
 }
 
 async function handleRealtimeEvent({ type, payload, userId, registry, socket }) {
+  await updateUserLastActiveAt(userId);
+
+  if (type === "presence:ping") {
+    await publishPresenceToPeers(registry, userId, "online");
+    return;
+  }
+
   if (type === "typing:start" || type === "typing:stop") {
     registry.send(payload.peerId, {
       type: "typing:update",

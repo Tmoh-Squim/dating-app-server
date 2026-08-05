@@ -230,8 +230,8 @@ function presenceStatus(lastActiveAt) {
   if (!lastActiveAt) return "Recently active";
   const lastSeen = new Date(lastActiveAt);
   const elapsedMs = Date.now() - lastSeen.getTime();
-  if (elapsedMs <= 2 * 60 * 1000) {
-    return "Online now";
+  if (elapsedMs <= 90 * 1000) {
+    return "Online";
   }
   return `Last seen ${formatTimestamp(lastSeen)}`;
 }

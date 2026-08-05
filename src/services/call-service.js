@@ -16,8 +16,11 @@ function computeCallMessageStatus(call) {
 }
 
 function computeCallDurationSeconds(call) {
+  if (!call.acceptedAt) {
+    return 0;
+  }
   const end = call.endedAt ? new Date(call.endedAt).getTime() : Date.now();
-  const start = call.acceptedAt ? new Date(call.acceptedAt).getTime() : new Date(call.startedAt).getTime();
+  const start = new Date(call.acceptedAt).getTime();
   return Math.max(0, Math.round((end - start) / 1000));
 }
 
