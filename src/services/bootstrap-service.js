@@ -151,7 +151,7 @@ async function buildBootstrapPayload(userId) {
     conversationRecords.push({
       id: String(conversation._id),
       name: peer.displayName,
-      status: "Active nearby",
+      status: presenceStatus(peer.lastActiveAt),
       recipientId: peerId,
       gradientStart: profileGradient(peerId).start,
       gradientEnd: profileGradient(peerId).end,
@@ -203,7 +203,7 @@ function seedStarterConversationsIfEmpty(userId, conversationRecords) {
     conversationRecords.push({
       id: profile.id,
       name: profile.name,
-      status: "Nearby now",
+      status: "Recently active",
       recipientId: profile.id,
       gradientStart: profile.gradientStart,
       gradientEnd: profile.gradientEnd,
@@ -255,6 +255,16 @@ function formatTimestamp(dateValue) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function presenceStatus(lastActiveAt) {
+  if (!lastActiveAt) return "Recently active";
+  const lastSeen = new Date(lastActiveAt);
+  const elapsedMs = Date.now() - lastSeen.getTime();
+  if (elapsedMs <= 2 * 60 * 1000) {
+    return "Online now";
+  }
+  return `Last seen ${formatTimestamp(lastSeen)}`;
 }
 
 function summarizeMessage(message) {

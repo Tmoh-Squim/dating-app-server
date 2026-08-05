@@ -2,6 +2,7 @@ const { WebSocketServer } = require("ws");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const { decryptMessageDocument, encryptMessageDocumentFields } = require("../lib/messageCrypto");
+const { ensureConversationBetweenUsers } = require("../services/conversation-service");
 const { registerSwipe } = require("../services/match-service");
 const {
   createCallSessionWithMessage,
@@ -109,9 +110,10 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
   }
 
   if (type === "message:send") {
+    const conversation = await ensureConversationBetweenUsers(userId, payload.recipientId);
     const messageType = payload.type === "voice_note" ? "voice_note" : "text";
     const message = await Message.create({
-      conversationId: payload.conversationId,
+      conversationId: String(conversation._id),
       senderId: userId,
       recipientId: payload.recipientId,
       type: messageType,
@@ -123,14 +125,14 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
     });
 
     await Conversation.findOneAndUpdate(
-      { _id: payload.conversationId },
+      { _id: String(conversation._id) },
       { lastMessageAt: new Date() },
     );
 
     const event = {
       type: "message:new",
       payload: {
-        conversationId: payload.conversationId,
+        conversationId: String(conversation._id),
         message: mapRealtimeMessage(message, { author: userId, fromCurrentUser: false }),
       },
     };
@@ -140,7 +142,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       JSON.stringify({
         type: "message:ack",
         payload: {
-          conversationId: payload.conversationId,
+          conversationId: String(conversation._id),
           clientId: payload.clientId,
           message: mapRealtimeMessage(message, {
             author: "You",
@@ -164,13 +166,13 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       payload: {
         callId: String(call._id),
         peerId: payload.calleeId,
-        conversationId: payload.conversationId,
+        conversationId: call.conversationId,
       },
     }));
     registry.send(payload.calleeId, {
       type: "message:new",
       payload: {
-        conversationId: payload.conversationId,
+        conversationId: call.conversationId,
         message: mapCallPayload(message, {
           author: payload.callerName || "Call",
           fromCurrentUser: false,
@@ -180,7 +182,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
     socket.send(JSON.stringify({
       type: "message:ack",
       payload: {
-        conversationId: payload.conversationId,
+        conversationId: call.conversationId,
         clientId: `call-${call.id}`,
         message: mapCallPayload(message, {
           author: "You",
@@ -192,7 +194,7 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
       type: "call:incoming",
       payload: {
         id: String(call._id),
-        conversationId: payload.conversationId,
+        conversationId: call.conversationId,
         callerId: userId,
         callerName: payload.callerName,
         type: payload.callType,

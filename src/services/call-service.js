@@ -1,6 +1,7 @@
 const CallSession = require("../models/CallSession");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const { ensureConversationBetweenUsers } = require("./conversation-service");
 const { encryptMessageDocumentFields } = require("../lib/messageCrypto");
 
 function computeCallMessageStatus(call) {
@@ -52,15 +53,16 @@ async function createCallSessionWithMessage({
   calleeId,
   callType,
 }) {
+  const conversation = await ensureConversationBetweenUsers(callerId, calleeId);
   const call = await CallSession.create({
-    conversationId,
+    conversationId: String(conversation._id),
     callerId,
     calleeId,
     type: callType,
   });
 
   const message = await Message.create({
-    conversationId,
+    conversationId: String(conversation._id),
     senderId: callerId,
     recipientId: calleeId,
     type: "call_event",
@@ -75,7 +77,7 @@ async function createCallSessionWithMessage({
 
   call.callMessageId = String(message._id);
   await call.save();
-  await touchConversation(conversationId);
+  await touchConversation(String(conversation._id));
 
   return { call, message };
 }
