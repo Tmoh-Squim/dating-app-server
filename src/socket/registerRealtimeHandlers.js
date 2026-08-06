@@ -5,6 +5,7 @@ const User = require("../models/User");
 const { decryptMessageDocument, encryptMessageDocumentFields } = require("../lib/messageCrypto");
 const { ensureConversationBetweenUsers } = require("../services/conversation-service");
 const { registerSwipe } = require("../services/match-service");
+const { chargeForUnmatchedChatMessage } = require("../services/engagement-service");
 const {
   createCallSessionWithMessage,
   updateCallSessionWithMessage,
@@ -234,6 +235,11 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
 
   if (type === "message:send") {
     const conversation = await ensureConversationBetweenUsers(userId, payload.recipientId);
+    const wallet = await chargeForUnmatchedChatMessage({
+      senderId: userId,
+      recipientId: payload.recipientId,
+      conversation,
+    });
     console.log(`[realtime] message:send resolved conversationId=${String(conversation._id)} senderId=${userId} recipientId=${payload.recipientId} messageType=${payload.type}`);
     const messageType = payload.type === "voice_note" ? "voice_note" : "text";
     const message = await Message.create({
@@ -276,6 +282,14 @@ async function handleRealtimeEvent({ type, payload, userId, registry, socket }) 
         },
       }),
     );
+    if (wallet) {
+      socket.send(
+        JSON.stringify({
+          type: "wallet:update",
+          payload: wallet,
+        }),
+      );
+    }
     return;
   }
 
