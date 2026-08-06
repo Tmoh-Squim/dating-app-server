@@ -102,7 +102,7 @@ function mapBootstrapMessage(rawMessage, { userId, author }) {
     callMediaType: message.callMediaType || "",
     callStatus: message.callStatus || "",
     callDurationSeconds: Number(message.callDurationSeconds || 0),
-    timestamp: formatTimestamp(message.createdAt),
+    timestamp: new Date(message.createdAt).toISOString(),
     fromCurrentUser: message.senderId === userId,
     senderId: message.senderId,
   };

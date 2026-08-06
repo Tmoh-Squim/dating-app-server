@@ -205,11 +205,7 @@ function mapCallPayload(message, { author, fromCurrentUser }) {
     callMediaType: decryptedMessage.callMediaType || "",
     callStatus: decryptedMessage.callStatus || "",
     callDurationSeconds: Number(decryptedMessage.callDurationSeconds || 0),
-    timestamp: new Date(decryptedMessage.createdAt).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }),
+    timestamp: new Date(decryptedMessage.createdAt).toISOString(),
     fromCurrentUser,
     senderId: decryptedMessage.senderId,
   };
@@ -402,11 +398,7 @@ function mapRealtimeMessage(message, { author, fromCurrentUser }) {
     callMediaType: decryptedMessage.callMediaType || "",
     callStatus: decryptedMessage.callStatus || "",
     callDurationSeconds: Number(decryptedMessage.callDurationSeconds || 0),
-    timestamp: new Date(decryptedMessage.createdAt).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }),
+    timestamp: new Date(decryptedMessage.createdAt).toISOString(),
     fromCurrentUser,
     senderId: decryptedMessage.senderId,
   };
